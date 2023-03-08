@@ -1,0 +1,109 @@
+version: "3.7"
+networks:
+    netBackEnd:
+     driver: bridge
+
+services:
+  ## Mongo Express
+  ## !! WARNING: Do not open this port in the firewall
+  ## !! You should only be able to reach MongoExpress over an SSH tunnel
+  mongo-express:
+    image: mongo-express:latest
+    container_name: mongo-express
+    restart: unless-stopped
+    depends_on: 
+      - mongo1
+    ports:
+      - 8081:8081
+    volumes: 
+      - ${DATA_DIR}/lets-encrypt-config/keys/:/keys/
+      # Thanks to
+      # https://github.com/mongo-express/mongo-express/issues/484#issuecomment-511480169
+      - "./mongo-express-config.js:/node_modules/mongo-express/config.js:ro"
+      #- ${DATA_DIR}/mongo-db/:/data/db
+    environment:
+      - ME_CONFIG_MONGODB_SERVER=mongo1
+      - ME_CONFIG_MONGODB_CA_FILE=/keys/cert.crt
+      - ME_CONFIG_MONGODB_ADMINUSERNAME=admin
+      - ME_CONFIG_MONGODB_ADMINPASSWORD=duda123
+      - ME_CONFIG_BASICAUTH_USERNAME=duda
+      - ME_CONFIG_BASICAUTH_PASSWORD=duda
+      - VCAP_APP_HOST=0.0.0.0
+      #- ME_CONFIG_MONGODB_URL=mongodb://admin:duda123@127.0.0.1:27017
+      - VCAP_APP_PORT=8081
+    networks:
+      - netBackEnd
+
+  ## MongoDB
+  mongo1:
+    image: mongo:latest
+    container_name: mongo1
+    restart: unless-stopped
+    depends_on: 
+      - letsencrypt
+    ports: 
+      - 27017:27017
+    expose:
+      - 27017
+    networks:
+      - netBackEnd
+    environment:
+      - MONGO_INITDB_ROOT_USERNAME=admin
+      - MONGO_INITDB_DATABASE=auth
+      - MONGO_INITDB_ROOT_PASSWORD=duda123
+    volumes:
+      - ${DATA_DIR}/mongo-db/:/data/db
+      - ${DATA_DIR}/lets-encrypt-config/keys/letsencrypt/:/keys/
+    healthcheck:
+      test: echo 'db.runCommand("ping").ok' | mongo1 127.0.0.1:27017/test --tls --tlsAllowInvalidCertificates --quiet
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    command:
+      [
+        "--tlsMode",
+        "requireTLS",
+        "--tlsCertificateKeyFile",
+        "/keys/priv-fullchain-bundle.pem",
+      ]
+
+  ## Let's Encrypt
+  letsencrypt:
+    image: linuxserver/letsencrypt:latest
+    container_name: letsencrypt
+    restart: unless-stopped
+    depends_on: 
+      - cloudflare
+    environment:
+      - PUID=${PUID}
+      - PGID=${PGID}
+      - TZ=${TIMEZONE}
+      - URL=${DOMAIN}
+      - SUBDOMAINS=${SUBDOMAIN},
+      - VALIDATION=http
+      # - DNSPLUGIN=cloudflare #optional
+      # - DUCKDNSTOKEN=<token> #optional
+      - EMAIL=${EMAIL} #optional
+      # - DHLEVEL=2048 #optional
+      - ONLY_SUBDOMAINS=true #optional
+      # - EXTRA_DOMAINS=<extradomains> #optional
+      - STAGING=${STAGING} #optional
+    volumes:
+      - ${DATA_DIR}/lets-encrypt-config/:/config/
+      - ./index.html:/config/www/index.html
+      - ./robots.txt:/config/www/robots.txt
+    ports:
+      - 443:443
+      - 80:80
+
+  ## DDNS with Cloudflare
+  cloudflare:
+    image: oznu/cloudflare-ddns:latest
+    container_name: cloudflare
+    restart: unless-stopped
+    environment:
+      - API_KEY=${CLOUDFLARE_API_KEY}
+      - ZONE=${DOMAIN}
+      - SUBDOMAIN=${SUBDOMAIN}
+      - PROXIED=false
+
